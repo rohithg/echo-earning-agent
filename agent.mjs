@@ -10,7 +10,16 @@
  */
 import { writeFileSync, appendFileSync, readFileSync, unlinkSync } from 'node:fs'
 
-const EVM_WALLET = '0xd194AB36E66BccDD80f19b56757CFe52EdEd49af' // Base USDC receive-only
+// ---- YOUR SETTINGS -------------------------------------------------------
+// Which PRs count as yours. Widen by dropping the org: filter, or repoint it
+// at whichever pay-per-merged-PR org you end up working.
+const PR_SEARCH = 'author:rohithg type:pr org:profullstack'
+// Hackathon watch. BOTH must be set, and only for a hackathon YOU entered.
+// Leave blank to disable the section (default).
+const HACKATHON_SLUG = ''
+const HACKATHON_CLAIM_CODE = ''
+// --------------------------------------------------------------------------
+const EVM_WALLET = '0xfe3527f800a9356c51daa43bfc20cddd98383de5' // Base USDC receive-only
 const BASE_USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
 const now = new Date().toISOString()
 
@@ -161,7 +170,7 @@ async function tokuRail() {
 // authored PRs across the profullstack org; merged = pull_request.merged_at set. Fires once on a rise.
 async function githubPrs() {
   try {
-    const q = encodeURIComponent('author:Echolonius type:pr org:profullstack')
+    const q = encodeURIComponent(PR_SEARCH)
     const headers = { Accept: 'application/vnd.github+json', 'User-Agent': 'echo-earning-agent' }
     if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`
     const r = await fetch(`https://api.github.com/search/issues?q=${q}&per_page=50`, { headers, signal: AbortSignal.timeout(10000) })
@@ -179,12 +188,12 @@ async function githubPrs() {
 }
 
 // Watch our submitted hackathon specifically — it drops off the "live" feed after its deadline,
-// but we still need to catch the winners announcement (submission 7ed59a67, ~$500–3000 if we place).
+// but we still need to catch the winners announcement. Disabled unless YOU set the config above.
 async function hackathonStatus() {
   const key = process.env.SUPERTEAM_API_KEY
-  if (!key) return { skipped: true }
+  if (!key || !HACKATHON_SLUG) return { skipped: true }
   try {
-    const r = await fetch('https://superteam.fun/api/agents/listings/details/imperial-ai-agent-hackathon-build-the-agent-economy', { headers: { Authorization: `Bearer ${key}` } })
+    const r = await fetch(`https://superteam.fun/api/agents/listings/details/${HACKATHON_SLUG}`, { headers: { Authorization: `Bearer ${key}` } })
     if (!r.ok) return { error: `HTTP ${r.status}` }
     const d = await r.json()
     const l = d.listing || d
@@ -193,7 +202,7 @@ async function hackathonStatus() {
 }
 
 // Solana-side USDC (second payment rail added 2026-07-05; receive-only wallet).
-const SOL_WALLET = '3wbinZDnWmDxHMLtACNrskwZvRwg4KYbBWw1wuviXXHT'
+const SOL_WALLET = '' // TODO: add your Solana address to enable the Solana rail; blank = skipped
 async function solUsdc() {
   try {
     const r = await fetch('https://api.mainnet-beta.solana.com', {
@@ -297,8 +306,8 @@ _Last run: ${now} (UTC), on GitHub Actions._
 ## 🔧 profullstack PR bounties (pay-per-merged-PR on ugig; invoice required after merge)
 - ${github.error ? `_err: ${github.error}_` : github.prs?.length ? `${github.merged}/${github.total} merged · ${github.prs.map((p) => `${p.merged ? '✅' : p.state === 'closed' ? '❌' : '⏳'} ${p.repo}#${p.num}`).join(', ')}${newMerge ? ' · 💵 **A PR JUST MERGED — SEND THE INVOICE ON ugig NOW**' : ''}` : '_no PRs found yet_'}
 
-## 🏆 Imperial hackathon (our submission 7ed59a67 — ~$500–3000 if we place)
-- listing status: **${hackathon.status ?? hackathon.error ?? 'n/a'}**${winnersFired ? ` · 🏆 **WINNERS ANNOUNCED — CHECK CLAIM: superteam.fun/earn/claim/415BE325D969CE8A28E7EC7A**` : ''}
+## 🏆 Hackathon watch
+- ${!HACKATHON_SLUG ? '_disabled — set HACKATHON_SLUG + HACKATHON_CLAIM_CODE at the top of agent.mjs if you enter one_' : `listing status: **${hackathon.status ?? hackathon.error ?? 'n/a'}**`}${winnersFired ? ` · 🏆 **WINNERS ANNOUNCED — CHECK CLAIM: superteam.fun/earn/claim/${HACKATHON_CLAIM_CODE}**` : ''}
 
 ## 🎯 Open agent listings (Superteam) — AGENT_ONLY first (lowest competition)
 ${superteam.skipped ? `_scan skipped: ${superteam.skipped}_`
@@ -321,7 +330,7 @@ writeFileSync(new URL('./status.md', import.meta.url), md)
 const NOTIFY = new URL('./NOTIFY.txt', import.meta.url)
 if (notify) {
   const msg = justWon
-    ? `🏆 HACKATHON WINNERS ANNOUNCED (${now}) — claim at superteam.fun/earn/claim/415BE325D969CE8A28E7EC7A`
+    ? `🏆 HACKATHON WINNERS ANNOUNCED (${now}) — claim at superteam.fun/earn/claim/${HACKATHON_CLAIM_CODE}`
     : (delta > 0 || solDelta > 0 || solNativeDelta > 0)
     ? `💰 PAYMENT RECEIVED (${now}) — ${delta > 0 ? `+${delta.toFixed(6)} USDC on Base (total ${usdc})` : ''}${delta > 0 && solDelta > 0 ? ' + ' : ''}${solDelta > 0 ? `+${solDelta.toFixed(6)} USDC on Solana (total ${solUsdcBal})` : ''}${solNativeDelta > 0 ? ` +${solNativeDelta.toFixed(9)} native SOL (total ${solNativeBal})` : ''}`
     : tokuDelta > 0
@@ -342,7 +351,7 @@ if (delta > 0) console.log(`::notice title=PAYMENT RECEIVED::+${delta.toFixed(6)
 if (solDelta > 0) console.log(`::notice title=PAYMENT RECEIVED::+${solDelta.toFixed(6)} USDC landed on Solana — total ${solUsdcBal}`)
 if (solNativeDelta > 0) console.log(`::notice title=PAYMENT RECEIVED::+${solNativeDelta.toFixed(9)} native SOL landed — total ${solNativeBal}`)
 if (newMerge) console.log('::notice title=PR MERGED::a profullstack PR merged — send the invoice on ugig now')
-if (winnersFired) console.log('::notice title=HACKATHON WINNERS ANNOUNCED::claim at superteam.fun/earn/claim/415BE325D969CE8A28E7EC7A')
+if (winnersFired) console.log(`::notice title=HACKATHON WINNERS ANNOUNCED::claim at superteam.fun/earn/claim/${HACKATHON_CLAIM_CODE}`)
 if (openTask.live?.length) console.log(`::notice title=OPENTASK RAIL LIVE::methods ${openTask.live.join(', ')} — a new earning source just opened`)
 if (newContract) console.log('::notice title=DEALWORK BID ACCEPTED::escrow locked — work is owed, open a session to deliver')
 if (tokuDelta > 0) console.log(`::notice title=TOKU PAYMENT::+$${(tokuDelta / 100).toFixed(2)} USD landed in the toku.agency wallet — total $${((toku.balanceCents || 0) / 100).toFixed(2)}`)
